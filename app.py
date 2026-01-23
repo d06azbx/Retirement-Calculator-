@@ -26,16 +26,16 @@ def main():
         monthly_exp_today = st.number_input("Monthly Expense (Today's rate ₹)", value=50000)
         inflation_pct = st.number_input("Annual Inflation (%)", value=5.0) / 100
 
-        # 🔥 ML UPLOAD SECTION
+        # ===== ML UPLOAD =====
         st.divider()
         st.header("ML: Learn Returns from Data")
         uploaded_files = st.file_uploader(
-            "Upload CSV / Excel files (with 'Return' column)",
+            "Upload CSV / Excel files",
             type=["csv", "xlsx"],
             accept_multiple_files=True
         )
 
-    # ================= ML MODEL =================
+    # ================= ML LEARNING ENGINE =================
     learned_return = None
 
     if uploaded_files:
@@ -43,12 +43,25 @@ def main():
 
         for file in uploaded_files:
             if file.name.endswith(".csv"):
-                df = pd.read_csv(file)
+                df_ml = pd.read_csv(file)
             else:
-                df = pd.read_excel(file)
+                df_ml = pd.read_excel(file)
 
-            if "Return" in df.columns:
-                returns.extend(df["Return"].dropna().values)
+            # Case 1: Return column exists
+            if "Return" in df_ml.columns:
+                returns.extend(df_ml["Return"].dropna().values)
+
+            # Case 2: Price data → compute returns
+            else:
+                price_col = None
+                for col in df_ml.columns:
+                    if col.lower() in ["close", "price", "nifty", "index"]:
+                        price_col = col
+                        break
+
+                if price_col:
+                    price_returns = df_ml[price_col].pct_change().dropna()
+                    returns.extend(price_returns.values)
 
         if len(returns) > 10:
             X = np.arange(len(returns)).reshape(-1, 1)
@@ -66,7 +79,13 @@ def main():
     # ================= INVESTMENT & TAX APPROACH =================
     st.header("Investment & Tax Approach")
 
-    assets = ["Fixed Returns", "Large Cap Mutual Funds", "Midcap Mutual Funds", "Smallcap Mutual funds"]
+    assets = [
+        "Fixed Returns",
+        "Large Cap Mutual Funds",
+        "Midcap Mutual Funds",
+        "Smallcap Mutual funds"
+    ]
+
     def_returns = [0.07, 0.12, 0.15, 0.18]
     def_taxes = [0.30, 0.20, 0.20, 0.20]
 
@@ -88,15 +107,27 @@ def main():
             c1, c2, c3, c4 = st.columns([2, 1, 1, 1])
             c1.write(name)
 
-            default_ret = learned_return if learned_return else def_returns[i]
-            r = c2.number_input("Ret", value=int(default_ret * 100), key=f"er_{i}", label_visibility="collapsed") / 100
-            t = c3.number_input("Tax", value=int(def_taxes[i] * 100), key=f"et_{i}", label_visibility="collapsed") / 100
-            s = c4.number_input("Shr", value=int(e_shares[i] * 100), key=f"es_{i}", label_visibility="collapsed") / 100
+            base_ret = learned_return if learned_return else def_returns[i]
+
+            r = c2.number_input(
+                "Ret", value=int(base_ret * 100),
+                key=f"er_{i}", label_visibility="collapsed"
+            ) / 100
+
+            t = c3.number_input(
+                "Tax", value=int(def_taxes[i] * 100),
+                key=f"et_{i}", label_visibility="collapsed"
+            ) / 100
+
+            s = c4.number_input(
+                "Shr", value=int(e_shares[i] * 100),
+                key=f"es_{i}", label_visibility="collapsed"
+            ) / 100
 
             e_data.append({"r": r, "t": t, "s": s})
 
-        w_ret_e = sum(d['r'] * d['s'] for d in e_data)
-        w_tax_e = sum(d['t'] * d['s'] for d in e_data)
+        w_ret_e = sum(d["r"] * d["s"] for d in e_data)
+        w_tax_e = sum(d["t"] * d["s"] for d in e_data)
 
         st.info(f"**Weighted Return:** {w_ret_e:.2%} | **Weighted Tax:** {w_tax_e:.2%}")
 
@@ -116,15 +147,27 @@ def main():
             c1, c2, c3, c4 = st.columns([2, 1, 1, 1])
             c1.write(name)
 
-            default_ret = learned_return if learned_return else def_returns[i]
-            r = c2.number_input("Ret", value=int(default_ret * 100), key=f"rr_{i}", label_visibility="collapsed") / 100
-            t = c3.number_input("Tax", value=int(def_taxes[i] * 100), key=f"rt_{i}", label_visibility="collapsed") / 100
-            s = c4.number_input("Shr", value=int(r_shares[i] * 100), key=f"rs_{i}", label_visibility="collapsed") / 100
+            base_ret = learned_return if learned_return else def_returns[i]
+
+            r = c2.number_input(
+                "Ret", value=int(base_ret * 100),
+                key=f"rr_{i}", label_visibility="collapsed"
+            ) / 100
+
+            t = c3.number_input(
+                "Tax", value=int(def_taxes[i] * 100),
+                key=f"rt_{i}", label_visibility="collapsed"
+            ) / 100
+
+            s = c4.number_input(
+                "Shr", value=int(r_shares[i] * 100),
+                key=f"rs_{i}", label_visibility="collapsed"
+            ) / 100
 
             r_data.append({"r": r, "t": t, "s": s})
 
-        w_ret_r = sum(d['r'] * d['s'] for d in r_data)
-        w_tax_r = sum(d['t'] * d['s'] for d in r_data)
+        w_ret_r = sum(d["r"] * d["s"] for d in r_data)
+        w_tax_r = sum(d["t"] * d["s"] for d in r_data)
 
         st.info(f"**Weighted Return:** {w_ret_r:.2%} | **Weighted Tax:** {w_tax_r:.2%}")
 
@@ -164,7 +207,7 @@ def main():
 
     df = pd.DataFrame(results)
 
-    # ================= DASHBOARD =================
+    # ================= OUTPUT =================
     st.divider()
     colA, colB = st.columns([1, 2])
 
@@ -183,7 +226,7 @@ def main():
         ))
         st.plotly_chart(fig, use_container_width=True)
 
-    with st.expander("Detailed Annual Breakdown"):
+    with st.expander("View Detailed Annual Breakdown"):
         show_df = df.copy()
         for col in ["Starting Saving", "Investment", "Expenses", "Ending Saving"]:
             show_df[col] = show_df[col].apply(lambda x: f"₹{x:,.0f}")
