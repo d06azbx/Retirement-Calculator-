@@ -3,78 +3,45 @@ import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
 
+from sklearn.linear_model import LinearRegression
+from sklearn.ensemble import RandomForestClassifier
+
 # -------------------------------------------------
 # PAGE CONFIG
 # -------------------------------------------------
 st.set_page_config(page_title="Retirement Planner", layout="wide")
 
 # -------------------------------------------------
-# AI / ML HELPERS (NON-INTRUSIVE)
+# ML DATA GENERATION
 # -------------------------------------------------
-def ai_insights(df, w_ret_e, w_ret_r, inflation_pct, ret_age):
-    insights = []
+def generate_ml_dataset(base_df, samples=1500):
+    rows = []
 
-    if w_ret_r < inflation_pct:
-        insights.append("⚠️ Post-retirement returns are lower than inflation. Purchasing power erosion risk detected.")
+    for _ in range(samples):
+        ret = np.random.normal(0.11, 0.04)
+        infl = np.random.normal(0.05, 0.01)
+        sip = np.random.randint(8000, 20000)
 
-    fail = df[(df['Status'] == 'Retired') & (df['Ending Saving'] < 0)]
-    if not fail.empty:
-        insights.append(f"❌ Retirement funds exhaust at age {int(fail.iloc[0]['Age'])}.")
-    else:
-        insights.append("✅ Retirement corpus sustains through the planned lifetime.")
+        bal = base_df.iloc[0]['Starting Saving']
+        exhausted_age = None
 
-    if w_ret_e < 0.10:
-        insights.append("📉 Earning phase return is conservative. Long-term wealth accumulation may be suboptimal.")
+        for _, r in base_df.iterrows():
+            bal = bal * (1 + ret) + sip * 12 - r['Expenses']
+            if bal < 0 and exhausted_age is None:
+                exhausted_age = r['Age']
 
-    if ret_age < 55:
-        insights.append("⏳ Early retirement increases longevity risk. Consider delaying retirement or increasing savings.")
+        # Failure only if exhausted before 75
+        failed = int(exhausted_age is not None and exhausted_age < 75)
 
-    return insights
+        rows.append({
+            "return": ret,
+            "inflation": infl,
+            "sip": sip,
+            "final_balance": bal,
+            "failed": failed
+        })
 
-
-def monte_carlo_simulation(df, simulations=1000):
-    final_balances = []
-
-    for _ in range(simulations):
-        bal = df.iloc[0]['Starting Saving']
-
-        for _, row in df.iterrows():
-            if row['Status'] == "Dead":
-                break
-
-            # Randomized return (ML-style stochastic behavior)
-            random_return = np.random.normal(loc=0.11, scale=0.05)
-            bal = bal * (1 + random_return) + row['Investment'] - row['Expenses']
-
-        final_balances.append(bal)
-
-    return final_balances
-
-
-def retirement_score(df, ret_age):
-    fail = df[(df['Status'] == 'Retired') & (df['Ending Saving'] < 0)]
-
-    if not fail.empty:
-        years_survived = fail.iloc[0]['Age'] - ret_age
-        return max(25, 100 - (30 - years_survived) * 2)
-
-    return 90
-
-
-def ai_financial_coach(df, score):
-    messages = []
-
-    if score >= 85:
-        messages.append("🟢 Excellent retirement readiness. Your current plan is well-structured.")
-    elif score >= 65:
-        messages.append("🟡 Moderate readiness. Minor tuning in savings or asset mix can improve outcomes.")
-    else:
-        messages.append("🔴 Low readiness. Action required: increase investments or delay retirement.")
-
-    messages.append("📌 AI Recommendation: Diversify post-retirement assets to manage inflation and longevity risk.")
-    messages.append("📌 AI Recommendation: Maintain at least 2–3 years of expenses in low-volatility instruments.")
-
-    return messages
+    return pd.DataFrame(rows)
 
 
 # -------------------------------------------------
@@ -114,12 +81,6 @@ def main():
         e_shares = [0.20, 0.40, 0.30, 0.10]
         e_data = []
 
-        h1, h2, h3, h4 = st.columns([2, 1, 1, 1])
-        h1.caption("Asset Type")
-        h2.caption("Return %")
-        h3.caption("Tax %")
-        h4.caption("Share %")
-
         for i, name in enumerate(assets):
             c1, c2, c3, c4 = st.columns([2, 1, 1, 1])
             c1.write(name)
@@ -139,12 +100,6 @@ def main():
         r_shares = [0.0, 1.0, 0.0, 0.0]
         r_data = []
 
-        h1, h2, h3, h4 = st.columns([2, 1, 1, 1])
-        h1.caption("Asset Type")
-        h2.caption("Return %")
-        h3.caption("Tax %")
-        h4.caption("Share %")
-
         for i, name in enumerate(assets):
             c1, c2, c3, c4 = st.columns([2, 1, 1, 1])
             c1.write(name)
@@ -158,7 +113,7 @@ def main():
 
         st.info(f"**Weighted Return:** {w_ret_r:.2%} | **Weighted Tax:** {w_tax_r:.2%}")
 
-    # ---------------- CORE CALCULATION ENGINE (UNCHANGED) ----------------
+    # ---------------- CORE CALCULATION ENGINE ----------------
     results = []
     current_bal = init_savings
     annual_saving = monthly_invest * 12
@@ -167,7 +122,7 @@ def main():
         if age < ret_age:
             status = "Earning"
             rate = w_ret_e
-            inv = annual_saving if age == curr_age else annual_saving * ((1 + step_up_pct) ** (age - curr_age))
+            inv = annual_saving * ((1 + step_up_pct) ** (age - curr_age))
             exp = 0
         elif age < end_age:
             status = "Retired"
@@ -194,7 +149,7 @@ def main():
 
     df = pd.DataFrame(results)
 
-    # ---------------- DASHBOARD ----------------
+    # ---------------- SUMMARY ----------------
     st.divider()
     res_col1, res_col2 = st.columns([1, 2])
 
@@ -206,18 +161,13 @@ def main():
             corpus = retirement_entry['Starting Saving'].values[0]
             st.metric("Retirement Corpus", f"₹{corpus:,.0f}")
 
-        fail_check = df[(df['Status'] == 'Retired') & (df['Ending Saving'] < 0)]
+        fail_check = df[(df['Status'] == 'Retired') & (df['Ending Saving'] < 0) & (df['Age'] < 75)]
         if not fail_check.empty:
             st.error(f"⚠️ Funds exhausted at age {int(fail_check.iloc[0]['Age'])}")
         else:
-            st.success("✅ Plan is sustainable")
-
-        fig_pie = go.Figure(data=[go.Pie(labels=assets, values=[d['s'] for d in e_data], hole=.3)])
-        fig_pie.update_layout(title="Earning Asset Mix", height=300, margin=dict(t=30, b=0, l=0, r=0))
-        st.plotly_chart(fig_pie, use_container_width=True)
+            st.success("✅ Plan is acceptable (funds last till at least 75)")
 
     with res_col2:
-        st.subheader("Wealth Projection")
         fig = go.Figure()
         fig.add_trace(go.Scatter(
             x=df['Age'],
@@ -225,37 +175,36 @@ def main():
             fill='tozeroy',
             name="Net Wealth"
         ))
-        fig.update_layout(height=450, margin=dict(l=0, r=0, t=20, b=0), yaxis_title="Savings (₹)")
+        fig.update_layout(height=450, yaxis_title="Savings (₹)")
         st.plotly_chart(fig, use_container_width=True)
 
-    # ---------------- AI / ML DASHBOARD ----------------
+    # ---------------- ML SECTION ----------------
     st.divider()
-    st.header("🤖 AI-Powered Analysis")
+    st.header("🤖 Machine Learning Risk Analysis")
 
-    ai_col1, ai_col2 = st.columns(2)
+    ml_df = generate_ml_dataset(df)
 
-    with ai_col1:
-        st.subheader("AI Insights")
-        for msg in ai_insights(df, w_ret_e, w_ret_r, inflation_pct, ret_age):
-            st.write(msg)
+    X = ml_df[['return', 'inflation', 'sip']]
+    y_fail = ml_df['failed']
+    y_balance = ml_df['final_balance']
 
-        score = retirement_score(df, ret_age)
-        st.metric("Retirement Readiness Score", f"{score}/100")
+    # Linear Regression
+    lr = LinearRegression()
+    lr.fit(X, y_balance)
+    lr_pred = lr.predict([[w_ret_e, inflation_pct, monthly_invest]])[0]
 
-    with ai_col2:
-        st.subheader("Monte Carlo Risk Simulation")
-        mc_results = monte_carlo_simulation(df)
-        failure_prob = sum(b < 0 for b in mc_results) / len(mc_results)
-        st.metric("Probability of Corpus Failure", f"{failure_prob:.1%}")
+    # Random Forest
+    rf = RandomForestClassifier(n_estimators=200, max_depth=5, random_state=42)
+    rf.fit(X, y_fail)
+    rf_prob = rf.predict_proba([[w_ret_e, inflation_pct, monthly_invest]])[0][1]
 
-        fig_mc = go.Figure()
-        fig_mc.add_trace(go.Histogram(x=mc_results, nbinsx=40))
-        fig_mc.update_layout(height=350, title="Distribution of Final Wealth")
-        st.plotly_chart(fig_mc, use_container_width=True)
+    col_ml1, col_ml2 = st.columns(2)
 
-    st.subheader("🧠 AI Financial Coach")
-    for advice in ai_financial_coach(df, score):
-        st.write(advice)
+    with col_ml1:
+        st.metric("Predicted Final Corpus (Linear Regression)", f"₹{lr_pred:,.0f}")
+
+    with col_ml2:
+        st.metric("Failure Probability Before Age 75 (Random Forest)", f"{rf_prob:.1%}")
 
     # ---------------- DATA TABLE ----------------
     with st.expander("View Detailed Annual Breakdown (Excel View)"):
