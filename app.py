@@ -1,41 +1,72 @@
 import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
+from sklearn.linear_model import LinearRegression
 import numpy as np
 
-# Page config
-st.set_page_config(page_title="AI Retirement Planner", layout="wide")
+# Set page to wide
+st.set_page_config(page_title="Retirement Planner", layout="wide")
 
 def main():
-    st.title("AI-Powered Retirement Planner")
+    st.title("Retirement Planner")
 
     # ================= SIDEBAR =================
     with st.sidebar:
         st.header("Core Assumptions")
-
         curr_age = st.number_input("Current Age", value=25)
         ret_age = st.number_input("Retirement Age", value=50)
         end_age = st.number_input("Plan Until Age", value=85)
 
         st.divider()
         init_savings = st.number_input("Current Savings (₹)", value=0)
-        monthly_invest = st.number_input("Monthly Investment (₹)", value=10000)
-        step_up_pct = st.number_input("Annual Step-up (%)", value=5.0) / 100
+        monthly_invest = st.number_input("Current Monthly Investment (₹)", value=10000)
+        step_up_pct = st.number_input("Annual Step-up in Savings (%)", value=5.0) / 100
 
         st.divider()
-        monthly_exp_today = st.number_input("Monthly Expense Today (₹)", value=50000)
-        inflation_pct = st.number_input("Inflation (%)", value=5.0) / 100
+        monthly_exp_today = st.number_input("Monthly Expense (Today's rate ₹)", value=50000)
+        inflation_pct = st.number_input("Annual Inflation (%)", value=5.0) / 100
 
+        # 🔥 ML UPLOAD SECTION
         st.divider()
-        st.header("AI / Simulation Settings")
-        enable_mc = st.checkbox("Enable Monte Carlo Simulation", True)
-        mc_runs = st.number_input("Simulation Runs", 500, 5000, 1000, step=500)
-        volatility = st.number_input("Return Volatility (%)", value=12.0) / 100
+        st.header("ML: Learn Returns from Data")
+        uploaded_files = st.file_uploader(
+            "Upload CSV / Excel files (with 'Return' column)",
+            type=["csv", "xlsx"],
+            accept_multiple_files=True
+        )
 
-    # ================= ASSET CONFIG =================
-    st.header("Investment Strategy")
+    # ================= ML MODEL =================
+    learned_return = None
 
-    assets = ["Fixed Returns", "Large Cap MF", "Midcap MF", "Smallcap MF"]
+    if uploaded_files:
+        returns = []
+
+        for file in uploaded_files:
+            if file.name.endswith(".csv"):
+                df = pd.read_csv(file)
+            else:
+                df = pd.read_excel(file)
+
+            if "Return" in df.columns:
+                returns.extend(df["Return"].dropna().values)
+
+        if len(returns) > 10:
+            X = np.arange(len(returns)).reshape(-1, 1)
+            y = np.array(returns)
+
+            model = LinearRegression()
+            model.fit(X, y)
+
+            learned_return = model.predict([[len(returns)]])[0]
+
+            st.success(f"📊 ML Learned Expected Return: {learned_return:.2%}")
+        else:
+            st.warning("Not enough data for ML learning (need >10 rows)")
+
+    # ================= INVESTMENT & TAX APPROACH =================
+    st.header("Investment & Tax Approach")
+
+    assets = ["Fixed Returns", "Large Cap Mutual Funds", "Midcap Mutual Funds", "Smallcap Mutual funds"]
     def_returns = [0.07, 0.12, 0.15, 0.18]
     def_taxes = [0.30, 0.20, 0.20, 0.20]
 
@@ -43,143 +74,120 @@ def main():
 
     # -------- EARNING PHASE --------
     with col1:
-        st.subheader("Earning Phase Allocation")
-
+        st.subheader("Earning Phase")
         e_shares = [0.20, 0.40, 0.30, 0.10]
         e_data = []
 
-        for i, name in enumerate(assets):
-            c1, c2, c3 = st.columns(3)
-            c1.write(name)
-            r = c2.number_input("Return %", value=int(def_returns[i]*100), key=f"er{i}") / 100
-            s = c3.number_input("Share %", value=int(e_shares[i]*100), key=f"es{i}") / 100
-            e_data.append({"r": r, "s": s})
+        h1, h2, h3, h4 = st.columns([2, 1, 1, 1])
+        h1.caption("Asset Type")
+        h2.caption("Return %")
+        h3.caption("Tax %")
+        h4.caption("Share %")
 
-        w_ret_e = sum(d["r"] * d["s"] for d in e_data)
-        st.info(f"Weighted Return (Earning): {w_ret_e:.2%}")
+        for i, name in enumerate(assets):
+            c1, c2, c3, c4 = st.columns([2, 1, 1, 1])
+            c1.write(name)
+
+            default_ret = learned_return if learned_return else def_returns[i]
+            r = c2.number_input("Ret", value=int(default_ret * 100), key=f"er_{i}", label_visibility="collapsed") / 100
+            t = c3.number_input("Tax", value=int(def_taxes[i] * 100), key=f"et_{i}", label_visibility="collapsed") / 100
+            s = c4.number_input("Shr", value=int(e_shares[i] * 100), key=f"es_{i}", label_visibility="collapsed") / 100
+
+            e_data.append({"r": r, "t": t, "s": s})
+
+        w_ret_e = sum(d['r'] * d['s'] for d in e_data)
+        w_tax_e = sum(d['t'] * d['s'] for d in e_data)
+
+        st.info(f"**Weighted Return:** {w_ret_e:.2%} | **Weighted Tax:** {w_tax_e:.2%}")
 
     # -------- RETIREMENT PHASE --------
     with col2:
-        st.subheader("Retirement Phase Allocation")
-
-        r_shares = [1.0, 0.0, 0.0, 0.0]
+        st.subheader("Retirement Phase")
+        r_shares = [0.0, 1.0, 0.0, 0.0]
         r_data = []
 
+        h1, h2, h3, h4 = st.columns([2, 1, 1, 1])
+        h1.caption("Asset Type")
+        h2.caption("Return %")
+        h3.caption("Tax %")
+        h4.caption("Share %")
+
         for i, name in enumerate(assets):
-            c1, c2, c3 = st.columns(3)
+            c1, c2, c3, c4 = st.columns([2, 1, 1, 1])
             c1.write(name)
-            r = c2.number_input("Return %", value=int(def_returns[i]*100), key=f"rr{i}") / 100
-            s = c3.number_input("Share %", value=int(r_shares[i]*100), key=f"rs{i}") / 100
-            r_data.append({"r": r, "s": s})
 
-        w_ret_r = sum(d["r"] * d["s"] for d in r_data)
-        st.info(f"Weighted Return (Retirement): {w_ret_r:.2%}")
+            default_ret = learned_return if learned_return else def_returns[i]
+            r = c2.number_input("Ret", value=int(default_ret * 100), key=f"rr_{i}", label_visibility="collapsed") / 100
+            t = c3.number_input("Tax", value=int(def_taxes[i] * 100), key=f"rt_{i}", label_visibility="collapsed") / 100
+            s = c4.number_input("Shr", value=int(r_shares[i] * 100), key=f"rs_{i}", label_visibility="collapsed") / 100
 
-    # ================= CORE CALCULATION =================
+            r_data.append({"r": r, "t": t, "s": s})
+
+        w_ret_r = sum(d['r'] * d['s'] for d in r_data)
+        w_tax_r = sum(d['t'] * d['s'] for d in r_data)
+
+        st.info(f"**Weighted Return:** {w_ret_r:.2%} | **Weighted Tax:** {w_tax_r:.2%}")
+
+    # ================= CALCULATION ENGINE (UNCHANGED) =================
     results = []
     current_bal = init_savings
     annual_saving = monthly_invest * 12
 
-    for age in range(curr_age, end_age + 1):
+    for age in range(curr_age, 101):
         if age < ret_age:
             status = "Earning"
             rate = w_ret_e
             inv = annual_saving * ((1 + step_up_pct) ** (age - curr_age))
             exp = 0
-        else:
+        elif age < end_age:
             status = "Retired"
             rate = w_ret_r
             inv = 0
             exp = (monthly_exp_today * 12) * ((1 + inflation_pct) ** (age - curr_age))
+        else:
+            status = "Dead"
+            rate, inv, exp, current_bal = 0, 0, 0, 0
 
         start_bal = current_bal
-        end_bal = start_bal * (1 + rate) + inv - exp
+        end_bal = start_bal * (1 + rate) + inv - exp if status != "Dead" else 0
 
         results.append({
             "Age": age,
             "Status": status,
-            "Starting Balance": start_bal,
+            "Starting Saving": start_bal,
             "Investment": inv,
             "Expenses": exp,
-            "Ending Balance": end_bal
+            "Ending Saving": end_bal
         })
 
         current_bal = end_bal
 
     df = pd.DataFrame(results)
 
-    # ================= MONTE CARLO AI MODEL =================
-    def monte_carlo_sim():
-        final_balances = []
-        ruin = 0
-
-        for _ in range(mc_runs):
-            bal = init_savings
-
-            for age in range(curr_age, end_age):
-                if age < ret_age:
-                    mean_ret = w_ret_e
-                    inv = annual_saving * ((1 + step_up_pct) ** (age - curr_age))
-                    exp = 0
-                else:
-                    mean_ret = w_ret_r
-                    inv = 0
-                    exp = (monthly_exp_today * 12) * ((1 + inflation_pct) ** (age - curr_age))
-
-                actual_return = np.random.normal(mean_ret, volatility)
-                bal = bal * (1 + actual_return) + inv - exp
-
-                if bal < 0:
-                    ruin += 1
-                    break
-
-            final_balances.append(max(bal, 0))
-
-        success_rate = (mc_runs - ruin) / mc_runs
-        return final_balances, success_rate
-
-    # ================= RESULTS =================
+    # ================= DASHBOARD =================
     st.divider()
     colA, colB = st.columns([1, 2])
 
     with colA:
         st.subheader("Summary")
-
-        retirement_corpus = df[df["Age"] == ret_age]["Starting Balance"].values[0]
-        st.metric("Corpus at Retirement", f"₹{retirement_corpus:,.0f}")
-
-        if enable_mc:
-            mc_results, success = monte_carlo_sim()
-            st.metric("Retirement Success Probability", f"{success:.1%}")
+        corpus = df[df["Age"] == ret_age]["Starting Saving"].values[0]
+        st.metric("Retirement Corpus", f"₹{corpus:,.0f}")
 
     with colB:
-        st.subheader("Wealth Projection")
-
         fig = go.Figure()
         fig.add_trace(go.Scatter(
             x=df["Age"],
-            y=df["Ending Balance"],
+            y=df["Ending Saving"],
             fill="tozeroy",
-            name="Deterministic Wealth"
+            name="Net Wealth"
         ))
         st.plotly_chart(fig, use_container_width=True)
 
-        if enable_mc:
-            fig2 = go.Figure()
-            fig2.add_histogram(x=mc_results, nbinsx=40)
-            fig2.update_layout(
-                title="Monte Carlo: Final Wealth Distribution",
-                xaxis_title="Final Wealth (₹)",
-                yaxis_title="Frequency"
-            )
-            st.plotly_chart(fig2, use_container_width=True)
-
-    # ================= DATA TABLE =================
-    with st.expander("Detailed Year-wise Table"):
-        display_df = df.copy()
-        for col in ["Starting Balance", "Investment", "Expenses", "Ending Balance"]:
-            display_df[col] = display_df[col].apply(lambda x: f"₹{x:,.0f}")
-        st.dataframe(display_df)
+    with st.expander("Detailed Annual Breakdown"):
+        show_df = df.copy()
+        for col in ["Starting Saving", "Investment", "Expenses", "Ending Saving"]:
+            show_df[col] = show_df[col].apply(lambda x: f"₹{x:,.0f}")
+        st.table(show_df)
 
 if __name__ == "__main__":
     main()
