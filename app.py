@@ -1,162 +1,139 @@
 import streamlit as st
+import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
-import numpy as np
 from sklearn.ensemble import RandomForestRegressor
 
+# -------------------------------
+# PAGE CONFIG
+# -------------------------------
 st.set_page_config(page_title="AI Retirement Planner", layout="wide")
+st.title("AI-Based Retirement Planner")
 
-def main():
-    st.title("AI Retirement Planner (Random Forest Model)")
+# -------------------------------
+# SIDEBAR INPUTS
+# -------------------------------
+with st.sidebar:
+    st.header("User Inputs")
 
-    # ---------------- SIDEBAR ----------------
-    with st.sidebar:
-        st.header("Core Assumptions")
-        curr_age = st.number_input("Current Age", value=25)
-        ret_age = st.number_input("Retirement Age", value=50)
-        end_age = st.number_input("Plan Until Age", value=85)
+    curr_age = st.number_input("Current Age", 18, 60, 25)
+    ret_age = st.number_input("Retirement Age", 40, 70, 60)
+    end_age = st.number_input("Life Expectancy", 70, 100, 85)
 
-        st.divider()
-        init_savings = st.number_input("Current Savings (₹)", value=0)
-        monthly_invest = st.number_input("Monthly Investment (₹)", value=10000)
-        step_up_pct = st.number_input("Annual Step-up (%)", value=5.0) / 100
+    monthly_invest = st.number_input("Monthly Investment (₹)", 1000, 500000, 15000)
+    step_up = st.number_input("Annual Step-up (%)", 0.0, 20.0, 8.0) / 100
 
-        st.divider()
-        monthly_exp_today = st.number_input("Monthly Expense (₹)", value=50000)
-        inflation_pct = st.number_input("Inflation (%)", value=5.0) / 100
+    monthly_expense = st.number_input("Monthly Expense at Retirement (₹)", 5000, 500000, 40000)
+    inflation = st.number_input("Inflation (%)", 3.0, 10.0, 6.0) / 100
 
-    # ---------------- ASSETS ----------------
-    assets = [
-        "Fixed Returns",
-        "Large Cap Mutual Funds",
-        "Midcap Mutual Funds",
-        "Smallcap Mutual funds"
-    ]
+    risk_tolerance = st.slider("Risk Tolerance", 0.0, 1.0, 0.7)
 
-    # ---------------- RANDOM FOREST MODEL ----------------
-    # Synthetic training data (academically acceptable)
-    ages = np.arange(20, 61)
-    years_to_retire = 60 - ages
-    equity_alloc = np.clip(20 + (years_to_retire * 1.5), 30, 90)
+# -------------------------------
+# AI MODEL (SIMULATED TRAINING)
+# -------------------------------
+np.random.seed(42)
 
-    X = np.column_stack((ages, years_to_retire))
-    y = equity_alloc
+X = []
+y = []
 
-    rf_model = RandomForestRegressor(
-        n_estimators=200,
-        random_state=42
-    )
-    rf_model.fit(X, y)
+for age in range(20, 60):
+    for risk in np.linspace(0.2, 1.0, 5):
+        years_left = max(1, 60 - age)
+        equity = min(0.9, max(0.2, risk * (years_left / 30)))
+        X.append([age, years_left, risk])
+        y.append(equity)
 
-    # Prediction
-    yrs_left = ret_age - curr_age
-    predicted_equity = rf_model.predict([[curr_age, yrs_left]])[0]
+X = np.array(X)
+y = np.array(y)
 
-    # Allocation breakdown
-    equity = predicted_equity / 100
-    fixed = 1 - equity
+model = RandomForestRegressor(n_estimators=200, random_state=42)
+model.fit(X, y)
 
-    large = equity * 0.55
-    mid = equity * 0.30
-    small = equity * 0.15
+years_to_ret = max(1, ret_age - curr_age)
+equity_pct = model.predict([[curr_age, years_to_ret, risk_tolerance]])[0]
+equity_pct = np.clip(equity_pct, 0.2, 0.8)
+debt_pct = 1 - equity_pct
 
-    ai_alloc = [fixed, large, mid, small]
+# -------------------------------
+# RETURNS
+# -------------------------------
+equity_return = 0.12
+debt_return = 0.07
 
-    # ---------------- AI OUTPUT ----------------
-    st.subheader("🤖 AI Recommended Portfolio Mix (Random Forest)")
+portfolio_return = equity_pct * equity_return + debt_pct * debt_return
 
-    ai_df = pd.DataFrame({
-        "Asset Class": assets,
-        "Recommended Allocation %": np.array(ai_alloc) * 100
+# -------------------------------
+# SIMULATION
+# -------------------------------
+ages = []
+corpus_values = []
+
+corpus = 0
+annual_invest = monthly_invest * 12
+annual_expense = monthly_expense * 12
+
+for age in range(curr_age, end_age + 1):
+
+    # EARNING PHASE
+    if age < ret_age:
+        corpus += annual_invest
+        annual_invest *= (1 + step_up)
+
+    # RETIREMENT PHASE
+    else:
+        corpus -= annual_expense
+        annual_expense *= (1 + inflation)
+
+    # Apply portfolio returns
+    if corpus > 0:
+        corpus *= (1 + portfolio_return)
+
+    corpus = max(corpus, 0)
+
+    ages.append(age)
+    corpus_values.append(corpus)
+
+# -------------------------------
+# SUSTAINABILITY CHECK
+# -------------------------------
+sustainable = corpus_values[-1] > 0
+
+# -------------------------------
+# RESULTS
+# -------------------------------
+st.subheader("Results")
+
+col1, col2 = st.columns(2)
+
+with col1:
+    st.metric("Final Retirement Corpus", f"₹{corpus_values[-1]:,.0f}")
+    st.success("Plan is sustainable ✅" if sustainable else "Plan is NOT sustainable ❌")
+
+with col2:
+    st.write("### AI Recommended Portfolio Mix")
+    alloc_df = pd.DataFrame({
+        "Asset": ["Equity", "Debt"],
+        "Allocation %": [equity_pct * 100, debt_pct * 100]
     })
+    st.dataframe(alloc_df, use_container_width=True)
 
-    st.table(ai_df.style.format({"Recommended Allocation %": "{:.1f}%"}))
+# -------------------------------
+# CHART
+# -------------------------------
+fig = go.Figure()
+fig.add_trace(go.Scatter(
+    x=ages,
+    y=corpus_values,
+    fill='tozeroy',
+    mode='lines',
+    name="Corpus Growth"
+))
 
-    st.info(
-        f"Predicted Equity Exposure: {predicted_equity:.1f}% "
-        f"(Model: Random Forest Regressor)"
-    )
+fig.update_layout(
+    title="Corpus Over Time",
+    xaxis_title="Age",
+    yaxis_title="Corpus (₹)",
+    template="plotly_dark"
+)
 
-    # ---------------- CALCULATION ENGINE ----------------
-    results = []
-    current_bal = init_savings
-    annual_saving = monthly_invest * 12
-
-    weighted_return_earning = (
-        fixed * 0.07 +
-        large * 0.12 +
-        mid * 0.15 +
-        small * 0.18
-    )
-
-    weighted_return_retired = 0.07  # conservative post-retirement
-
-    for age in range(curr_age, 101):
-        if age < ret_age:
-            status = "Earning"
-            rate = weighted_return_earning
-            inv = annual_saving * ((1 + step_up_pct) ** (age - curr_age))
-            exp = 0
-        elif age < end_age:
-            status = "Retired"
-            rate = weighted_return_retired
-            inv = 0
-            exp = monthly_exp_today * 12 * ((1 + inflation_pct) ** (age - curr_age))
-        else:
-            status = "Dead"
-            rate = inv = exp = current_bal = 0
-
-        start = current_bal
-        end = start * (1 + rate) + inv - exp if status != "Dead" else 0
-
-        results.append({
-            "Age": age,
-            "Status": status,
-            "Starting Saving": start,
-            "Investment": inv,
-            "Expenses": exp,
-            "Ending Saving": end
-        })
-
-        current_bal = end
-
-    df = pd.DataFrame(results)
-
-    # ---------------- DASHBOARD ----------------
-    st.divider()
-    col1, col2 = st.columns([1, 2])
-
-    with col1:
-        corpus = df[df["Age"] == ret_age]["Starting Saving"].values[0]
-        st.metric("Retirement Corpus", f"₹{corpus:,.0f}")
-
-        fail = df[(df["Status"] == "Retired") & (df["Ending Saving"] < 0)]
-        if not fail.empty:
-            st.error(f"Funds exhausted at age {fail.iloc[0]['Age']}")
-        else:
-            st.success("Plan is sustainable")
-
-        pie = go.Figure(go.Pie(labels=assets, values=ai_alloc, hole=0.4))
-        pie.update_layout(height=300)
-        st.plotly_chart(pie, use_container_width=True)
-
-    with col2:
-        fig = go.Figure()
-        fig.add_trace(go.Scatter(
-            x=df["Age"],
-            y=df["Ending Saving"],
-            fill="tozeroy",
-            name="Net Wealth"
-        ))
-        fig.update_layout(height=450, yaxis_title="Savings (₹)")
-        st.plotly_chart(fig, use_container_width=True)
-
-    # ---------------- TABLE ----------------
-    with st.expander("View Detailed Annual Breakdown"):
-        fdf = df.copy()
-        for c in ["Starting Saving", "Investment", "Expenses", "Ending Saving"]:
-            fdf[c] = fdf[c].apply(lambda x: f"₹{x:,.0f}")
-        st.table(fdf)
-
-if __name__ == "__main__":
-    main()
+st.plotly_chart(fig, use_container_width=True)
