@@ -2,14 +2,14 @@ import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
 import numpy as np
+from sklearn.ensemble import RandomForestRegressor
 
-# Page setup
 st.set_page_config(page_title="AI Retirement Planner", layout="wide")
 
 def main():
-    st.title("AI-Powered Retirement Planner")
+    st.title("AI Retirement Planner (Random Forest Model)")
 
-    # ---------------- SIDEBAR: CORE ASSUMPTIONS ----------------
+    # ---------------- SIDEBAR ----------------
     with st.sidebar:
         st.header("Core Assumptions")
         curr_age = st.number_input("Current Age", value=25)
@@ -18,14 +18,14 @@ def main():
 
         st.divider()
         init_savings = st.number_input("Current Savings (₹)", value=0)
-        monthly_invest = st.number_input("Current Monthly Investment (₹)", value=10000)
-        step_up_pct = st.number_input("Annual Step-up in Savings (%)", value=5.0) / 100
+        monthly_invest = st.number_input("Monthly Investment (₹)", value=10000)
+        step_up_pct = st.number_input("Annual Step-up (%)", value=5.0) / 100
 
         st.divider()
-        monthly_exp_today = st.number_input("Monthly Expense (Today's ₹)", value=50000)
-        inflation_pct = st.number_input("Annual Inflation (%)", value=5.0) / 100
+        monthly_exp_today = st.number_input("Monthly Expense (₹)", value=50000)
+        inflation_pct = st.number_input("Inflation (%)", value=5.0) / 100
 
-    # ---------------- ASSET DEFINITIONS ----------------
+    # ---------------- ASSETS ----------------
     assets = [
         "Fixed Returns",
         "Large Cap Mutual Funds",
@@ -33,105 +33,73 @@ def main():
         "Smallcap Mutual funds"
     ]
 
-    def_returns = [0.07, 0.12, 0.15, 0.18]
-    def_taxes = [0.30, 0.20, 0.20, 0.20]
+    # ---------------- RANDOM FOREST MODEL ----------------
+    # Synthetic training data (academically acceptable)
+    ages = np.arange(20, 61)
+    years_to_retire = 60 - ages
+    equity_alloc = np.clip(20 + (years_to_retire * 1.5), 30, 90)
 
-    st.header("Investment & Tax Approach")
-    col1, col2 = st.columns(2)
+    X = np.column_stack((ages, years_to_retire))
+    y = equity_alloc
 
-    # ---------------- EARNING PHASE ----------------
-    with col1:
-        st.subheader("Earning Phase Allocation")
+    rf_model = RandomForestRegressor(
+        n_estimators=200,
+        random_state=42
+    )
+    rf_model.fit(X, y)
 
-        e_shares = [0.20, 0.40, 0.30, 0.10]
-        e_data = []
+    # Prediction
+    yrs_left = ret_age - curr_age
+    predicted_equity = rf_model.predict([[curr_age, yrs_left]])[0]
 
-        h1, h2, h3, h4 = st.columns([2, 1, 1, 1])
-        h1.caption("Asset")
-        h2.caption("Return %")
-        h3.caption("Tax %")
-        h4.caption("Share %")
+    # Allocation breakdown
+    equity = predicted_equity / 100
+    fixed = 1 - equity
 
-        for i, asset in enumerate(assets):
-            c1, c2, c3, c4 = st.columns([2, 1, 1, 1])
-            c1.write(asset)
-            r = c2.number_input("R", value=int(def_returns[i]*100), key=f"er_{i}", label_visibility="collapsed") / 100
-            t = c3.number_input("T", value=int(def_taxes[i]*100), key=f"et_{i}", label_visibility="collapsed") / 100
-            s = c4.number_input("S", value=int(e_shares[i]*100), key=f"es_{i}", label_visibility="collapsed") / 100
-            e_data.append({"r": r, "t": t, "s": s})
+    large = equity * 0.55
+    mid = equity * 0.30
+    small = equity * 0.15
 
-        w_ret_e = sum(d["r"] * d["s"] for d in e_data)
-        w_tax_e = sum(d["t"] * d["s"] for d in e_data)
+    ai_alloc = [fixed, large, mid, small]
 
-        st.info(f"Weighted Return: {w_ret_e:.2%} | Weighted Tax: {w_tax_e:.2%}")
-
-    # ---------------- RETIREMENT PHASE ----------------
-    with col2:
-        st.subheader("Retirement Phase Allocation")
-
-        r_shares = [0.0, 1.0, 0.0, 0.0]
-        r_data = []
-
-        h1, h2, h3, h4 = st.columns([2, 1, 1, 1])
-        h1.caption("Asset")
-        h2.caption("Return %")
-        h3.caption("Tax %")
-        h4.caption("Share %")
-
-        for i, asset in enumerate(assets):
-            c1, c2, c3, c4 = st.columns([2, 1, 1, 1])
-            c1.write(asset)
-            r = c2.number_input("R", value=int(def_returns[i]*100), key=f"rr_{i}", label_visibility="collapsed") / 100
-            t = c3.number_input("T", value=int(def_taxes[i]*100), key=f"rt_{i}", label_visibility="collapsed") / 100
-            s = c4.number_input("S", value=int(r_shares[i]*100), key=f"rs_{i}", label_visibility="collapsed") / 100
-            r_data.append({"r": r, "t": t, "s": s})
-
-        w_ret_r = sum(d["r"] * d["s"] for d in r_data)
-        w_tax_r = sum(d["t"] * d["s"] for d in r_data)
-
-        st.info(f"Weighted Return: {w_ret_r:.2%} | Weighted Tax: {w_tax_r:.2%}")
-
-    # ---------------- AI PORTFOLIO RECOMMENDATION ----------------
-    def ai_portfolio_recommendation(curr_age, ret_age):
-        years_left = ret_age - curr_age
-        risk_score = min(max(years_left / 30, 0), 1)
-
-        fixed = 0.6 - 0.4 * risk_score
-        large = 0.25 + 0.2 * risk_score
-        mid = 0.10 + 0.15 * risk_score
-        small = 0.05 + 0.05 * risk_score
-
-        alloc = np.array([fixed, large, mid, small])
-        alloc = alloc / alloc.sum()
-
-        return alloc, risk_score
-
-    alloc, risk_score = ai_portfolio_recommendation(curr_age, ret_age)
-
-    st.subheader("🤖 AI Recommended Portfolio Mix")
+    # ---------------- AI OUTPUT ----------------
+    st.subheader("🤖 AI Recommended Portfolio Mix (Random Forest)")
 
     ai_df = pd.DataFrame({
         "Asset Class": assets,
-        "Recommended Allocation %": alloc * 100
+        "Recommended Allocation %": np.array(ai_alloc) * 100
     })
 
     st.table(ai_df.style.format({"Recommended Allocation %": "{:.1f}%"}))
-    st.info(f"AI Risk Score: {risk_score:.2f} (Higher = higher equity exposure)")
+
+    st.info(
+        f"Predicted Equity Exposure: {predicted_equity:.1f}% "
+        f"(Model: Random Forest Regressor)"
+    )
 
     # ---------------- CALCULATION ENGINE ----------------
     results = []
     current_bal = init_savings
     annual_saving = monthly_invest * 12
 
+    weighted_return_earning = (
+        fixed * 0.07 +
+        large * 0.12 +
+        mid * 0.15 +
+        small * 0.18
+    )
+
+    weighted_return_retired = 0.07  # conservative post-retirement
+
     for age in range(curr_age, 101):
         if age < ret_age:
             status = "Earning"
-            rate = w_ret_e
+            rate = weighted_return_earning
             inv = annual_saving * ((1 + step_up_pct) ** (age - curr_age))
             exp = 0
         elif age < end_age:
             status = "Retired"
-            rate = w_ret_r
+            rate = weighted_return_retired
             inv = 0
             exp = monthly_exp_today * 12 * ((1 + inflation_pct) ** (age - curr_age))
         else:
@@ -159,7 +127,6 @@ def main():
     col1, col2 = st.columns([1, 2])
 
     with col1:
-        st.subheader("Summary")
         corpus = df[df["Age"] == ret_age]["Starting Saving"].values[0]
         st.metric("Retirement Corpus", f"₹{corpus:,.0f}")
 
@@ -169,7 +136,7 @@ def main():
         else:
             st.success("Plan is sustainable")
 
-        pie = go.Figure(go.Pie(labels=assets, values=alloc, hole=0.4))
+        pie = go.Figure(go.Pie(labels=assets, values=ai_alloc, hole=0.4))
         pie.update_layout(height=300)
         st.plotly_chart(pie, use_container_width=True)
 
@@ -181,11 +148,11 @@ def main():
             fill="tozeroy",
             name="Net Wealth"
         ))
-        fig.update_layout(height=450, yaxis_title="₹ Savings")
+        fig.update_layout(height=450, yaxis_title="Savings (₹)")
         st.plotly_chart(fig, use_container_width=True)
 
     # ---------------- TABLE ----------------
-    with st.expander("Detailed Year-wise Table"):
+    with st.expander("View Detailed Annual Breakdown"):
         fdf = df.copy()
         for c in ["Starting Saving", "Investment", "Expenses", "Ending Saving"]:
             fdf[c] = fdf[c].apply(lambda x: f"₹{x:,.0f}")
